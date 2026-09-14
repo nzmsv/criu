@@ -1,0 +1,26 @@
+test/rdma/uverbs_ctx_holder.c
+  s_fd0be53cef2a4b::t_661f84eccd9560 135-212,477-478,486-488
+  s_fd0be53cef2a4b::t_b422c1767af722 73,213-252,489-501
+  s_fd0be53cef2a4b::t_6933c306b2ed9d 69-72,91-98,280,504-505
+  s_fd0be53cef2a4b::t_f0700f71396ca8 502
+test/rdma/run_vfmig_dmabuf_mr_cr.sh
+  s_fd0be53cef2a4b::t_825e573431f104 1-202,204-342
+  s_fd0be53cef2a4b::t_ccea7e09d118e1 203
+  s_fd0be53cef2a4b::t_2d8d8c1f2ec937 343-349
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "28a1ebb3270cf3882f5dbb49f65143916fe631d4",
+  "prompts": {},
+  "sessions": {
+    "s_fd0be53cef2a4b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1764101b-1723-448d-86c1-b425326dd77b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Grigori Inozemtsev <ginozemtsev@nvidia.com>"
+    }
+  }
+}
