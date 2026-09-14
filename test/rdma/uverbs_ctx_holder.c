@@ -66,6 +66,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <sys/ioctl.h>
+#include <sys/mman.h>
+#include <linux/udmabuf.h>
+#include <rdma/rdma_user_ioctl_cmds.h>
 
 #include <infiniband/verbs.h>
 
@@ -82,6 +87,14 @@ static volatile sig_atomic_t g_query;
 /* Persistent-MR buffer: page-aligned anon (.bss) so the pie lays the
  * VMA out at its original VA before RESTORE_MR pins it. */
 static unsigned char g_mr_buf[8192] __attribute__((aligned(4096)));
+
+/*
+ * HOLDER_ALLOC_DMABUF_MR points these at a udmabuf-backed mapping instead
+ * of g_mr_buf. The content check runs through the CPU mapping either way;
+ * what differs is how the MR was registered.
+ */
+static unsigned char *g_mr_check_buf;
+static size_t g_mr_check_len;
 
 static void fill_pattern(unsigned char *b, size_t n)
 {
@@ -119,6 +132,127 @@ static void on_sigusr1(int sig)
  * RESTORE_PD reinstalled the uobject at the handle userspace still
  * holds. Returns 0 on success, -1 on failure (msg filled).
  */
+/*
+ * Register a dma-buf-backed MR over a udmabuf wrapping a sealed memfd.
+ *
+ * This stands in for a GPU allocation without needing a GPU: from the
+ * RDMA stack's point of view it is an ib_umem_dmabuf just like an
+ * nvidia one, so the MR carries no user VA (QUERY_MR reports
+ * user_addr == 0) and its DMA addresses come from the exporter rather
+ * than from ib_umem's own mapping.
+ *
+ * The dma-buf fd is closed once the MR holds its reference, mirroring
+ * how a CUDA app behaves: by checkpoint time nobody owns an fd for it,
+ * which is exactly why MR_EXPORT_DMABUF_FD exists. That also keeps the
+ * fd out of CRIU's way, since it has no handler for a udmabuf fd.
+ */
+static int alloc_dmabuf_mr(size_t len)
+{
+	struct udmabuf_create create = {};
+	int memfd, udev, dmabuf_fd;
+	void *map;
+
+	memfd = memfd_create("vfmig-dmabuf-mr", MFD_ALLOW_SEALING | MFD_CLOEXEC);
+	if (memfd < 0) {
+		fprintf(stderr, "memfd_create: %s\n", strerror(errno));
+		return -1;
+	}
+	if (ftruncate(memfd, len)) {
+		fprintf(stderr, "ftruncate: %s\n", strerror(errno));
+		return -1;
+	}
+	/* udmabuf refuses a memfd that can still shrink under it. */
+	if (fcntl(memfd, F_ADD_SEALS, F_SEAL_SHRINK)) {
+		fprintf(stderr, "F_ADD_SEALS: %s\n", strerror(errno));
+		return -1;
+	}
+
+	map = mmap(NULL, len, PROT_READ | PROT_WRITE, MAP_SHARED, memfd, 0);
+	if (map == MAP_FAILED) {
+		fprintf(stderr, "mmap memfd: %s\n", strerror(errno));
+		return -1;
+	}
+	g_mr_check_buf = map;
+	g_mr_check_len = len;
+	fill_pattern(map, len);
+
+	udev = open("/dev/udmabuf", O_RDWR | O_CLOEXEC);
+	if (udev < 0) {
+		fprintf(stderr, "open /dev/udmabuf: %s (CONFIG_UDMABUF? root?)\n",
+			strerror(errno));
+		return -1;
+	}
+	create.memfd = memfd;
+	create.offset = 0;
+	create.size = len;
+	dmabuf_fd = ioctl(udev, UDMABUF_CREATE, &create);
+	close(udev);
+	if (dmabuf_fd < 0) {
+		fprintf(stderr, "UDMABUF_CREATE: %s\n", strerror(errno));
+		return -1;
+	}
+
+	/* offset and iova must agree modulo the page size; 0/0 does. */
+	g_mr = ibv_reg_dmabuf_mr(g_pd, 0, len, 0, dmabuf_fd,
+				 IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ |
+					 IBV_ACCESS_REMOTE_WRITE);
+	if (!g_mr) {
+		fprintf(stderr, "ibv_reg_dmabuf_mr: %s\n", strerror(errno));
+		close(dmabuf_fd);
+		return -1;
+	}
+	close(dmabuf_fd);
+	close(memfd);
+	g_mr_lkey = g_mr->lkey;
+	g_mr_rkey = g_mr->rkey;
+	printf("dmabuf MR: lkey=0x%x rkey=0x%x len=%zu\n", g_mr_lkey, g_mr_rkey, len);
+	fflush(stdout);
+	return 0;
+}
+
+/*
+ * Issue UVERBS_METHOD_MR_UNBIND_DMABUF on @mr.
+ *
+ * Detaches the MR from its dma-buf while keeping the mkey, so the device
+ * state saved at checkpoint describes an identity with no exporter
+ * addresses behind it. Ids are hardcoded: rdma-core's headers predate the
+ * verb. Both live in the core namespace -- the method is the 8th entry of
+ * enum uverbs_methods_mr, the attribute the 1st of
+ * enum uverbs_attrs_mr_unbind_dmabuf_ids -- so neither carries the
+ * UVERBS_ID_NS_SHIFT bit a driver-namespace id would. driver_id must
+ * still be the real one: the ioctl dispatcher validates it for core and
+ * driver verbs alike.
+ */
+#define OBJ_MR_		    7
+#define M_MR_UNBIND_DMABUF_ 7
+#define A_UNBIND_MR_HANDLE_ 0
+#define RDMA_DRIVER_MLX5_   1
+
+static int unbind_dmabuf_mr(struct ibv_context *ctx, struct ibv_mr *m)
+{
+	struct {
+		struct ib_uverbs_ioctl_hdr hdr;
+		struct ib_uverbs_attr attrs[1];
+	} cmd;
+
+	memset(&cmd, 0, sizeof(cmd));
+	cmd.hdr.length = sizeof(cmd.hdr) + sizeof(cmd.attrs[0]);
+	cmd.hdr.object_id = OBJ_MR_;
+	cmd.hdr.method_id = M_MR_UNBIND_DMABUF_;
+	cmd.hdr.num_attrs = 1;
+	cmd.hdr.driver_id = RDMA_DRIVER_MLX5_;
+	cmd.attrs[0].attr_id = A_UNBIND_MR_HANDLE_;
+	cmd.attrs[0].flags = UVERBS_ATTR_F_MANDATORY;
+	cmd.attrs[0].len = 0;
+	cmd.attrs[0].data = m->handle;
+
+	if (ioctl(ctx->cmd_fd, RDMA_VERBS_IOCTL, &cmd)) {
+		fprintf(stderr, "UNBIND_DMABUF: %s\n", strerror(errno));
+		return -1;
+	}
+	return 0;
+}
+
 static int verify_pd(char *msg, size_t msglen)
 {
 	static char buf[4096] __attribute__((aligned(4096)));
@@ -146,7 +280,7 @@ static int verify_pd(char *msg, size_t msglen)
  */
 static int verify_mr(char *msg, size_t msglen)
 {
-	if (check_pattern(g_mr_buf, sizeof(g_mr_buf))) {
+	if (check_pattern(g_mr_check_buf, g_mr_check_len)) {
 		snprintf(msg, msglen, "FAIL: MR buffer content mismatch after restore");
 		return -1;
 	}
@@ -343,7 +477,8 @@ int main(int argc, char **argv)
 	}
 
 	/* MR and QP modes both imply a PD (their parent). */
-	if (getenv("HOLDER_ALLOC_PD") || getenv("HOLDER_ALLOC_MR") || getenv("HOLDER_ALLOC_QP")) {
+	if (getenv("HOLDER_ALLOC_PD") || getenv("HOLDER_ALLOC_MR") ||
+	    getenv("HOLDER_ALLOC_DMABUF_MR") || getenv("HOLDER_ALLOC_QP")) {
 		g_pd = ibv_alloc_pd(g_ctx);
 		if (!g_pd) {
 			fprintf(stderr, "ibv_alloc_pd: %s\n", strerror(errno));
@@ -351,7 +486,26 @@ int main(int argc, char **argv)
 		}
 	}
 
+	if (getenv("HOLDER_ALLOC_DMABUF_MR")) {
+		if (alloc_dmabuf_mr(sizeof(g_mr_buf)))
+			return 2;
+		/*
+		 * HOLDER_UNBIND_DMABUF_MR: detach before the checkpoint, so
+		 * the saved device state carries the mkey as an identity
+		 * rather than as a description of the exporter's memory.
+		 */
+		if (getenv("HOLDER_UNBIND_DMABUF_MR")) {
+			if (unbind_dmabuf_mr(g_ctx, g_mr))
+				return 2;
+			printf("dmabuf MR unbound (lkey=0x%x retained)\n",
+			       g_mr_lkey);
+			fflush(stdout);
+		}
+	}
+
 	if (getenv("HOLDER_ALLOC_MR")) {
+		g_mr_check_buf = g_mr_buf;
+		g_mr_check_len = sizeof(g_mr_buf);
 		fill_pattern(g_mr_buf, sizeof(g_mr_buf));
 		g_mr = ibv_reg_mr(g_pd, g_mr_buf, sizeof(g_mr_buf),
 				  IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_WRITE);
