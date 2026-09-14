@@ -10,9 +10,17 @@
 /* Copied from the kernel header arch/arm64/include/uapi/asm/sigcontext.h */
 
 #define FPSIMD_MAGIC 0x46508001
-#define GCS_MAGIC    0x47435300
 
 typedef struct fpsimd_context fpu_state_t;
+
+/*
+ * Kernels from v6.13 define GCS_MAGIC and struct gcs_context in
+ * asm/sigcontext.h, which arrives here via <signal.h>. Only fall back to
+ * our own copy when building against headers that predate it; defining it
+ * unconditionally is a hard redefinition error on newer headers.
+ */
+#ifndef GCS_MAGIC
+#define GCS_MAGIC 0x47435300
 
 struct gcs_context {
 	struct _aarch64_ctx head;
@@ -20,6 +28,7 @@ struct gcs_context {
 	__u64 features_enabled;
 	__u64 reserved;
 };
+#endif
 
 struct aux_context {
 	struct fpsimd_context fpsimd;
