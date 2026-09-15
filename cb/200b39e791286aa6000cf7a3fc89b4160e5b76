@@ -1,0 +1,20 @@
+criu/include/rdma.h
+  s_fd0be53cef2a4b::t_db296ecd41197e 148-149,191-203
+  s_fd0be53cef2a4b::t_a49aa11030f325 204
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "cb200b39e791286aa6000cf7a3fc89b4160e5b76",
+  "prompts": {},
+  "sessions": {
+    "s_fd0be53cef2a4b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1764101b-1723-448d-86c1-b425326dd77b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Grigori Inozemtsev <ginozemtsev@nvidia.com>"
+    }
+  }
+}
