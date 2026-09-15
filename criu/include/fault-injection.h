@@ -22,6 +22,13 @@ enum faults {
 	FI_DUMP_CRASH = 136,
 	FI_COMPEL_INTERRUPT_ONLY_MODE = 137,
 	FI_PLUGIN_CUDA_FORCE_ENABLE = 138,
+	/*
+	 * Fail the dump after the uobject walk has unbound the DMA-BUF MRs
+	 * and while criu still holds the fds it exported their buffers to --
+	 * the window the dump-side rollback covers. A completed dump never
+	 * enters that path, so this is the only way to exercise it.
+	 */
+	FI_DUMP_AFTER_RDMA_UNBIND = 139,
 	FI_MAX,
 };
 
