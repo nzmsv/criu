@@ -1,0 +1,21 @@
+criu/include/rdma.h
+  s_fd0be53cef2a4b::t_ac40f88e00dfc4 104-111
+test/rdma/dmabuf_test_plugin.c
+  s_fd0be53cef2a4b::t_de68a4f4857cea 30,34,36
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "b372b482c1222cf707affdcca4bb6cc4c1735929",
+  "prompts": {},
+  "sessions": {
+    "s_fd0be53cef2a4b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1764101b-1723-448d-86c1-b425326dd77b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Grigori Inozemtsev <ginozemtsev@nvidia.com>"
+    }
+  }
+}
