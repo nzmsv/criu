@@ -1,0 +1,26 @@
+test/rdma/run_vfmig_dmabuf_mr_cr.sh
+  s_fd0be53cef2a4b::t_9ae7c801f1161f 130-134
+  s_fd0be53cef2a4b::t_ece8ad6078c5ad 23-37,96,160,186-187,350-361
+  s_fd0be53cef2a4b::t_a794caff1c8e97 362
+test/rdma/Makefile
+  s_fd0be53cef2a4b::t_4d65ad1a439cb8 5,13-17,19-21,23
+  s_fd0be53cef2a4b::t_def67816f9bc1f 18
+test/rdma/dmabuf_test_plugin.c
+  s_fd0be53cef2a4b::t_6d3699e0437924 1-175
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "054ce52fbc3f04e867fbb1bd490ff7da65435528",
+  "prompts": {},
+  "sessions": {
+    "s_fd0be53cef2a4b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1764101b-1723-448d-86c1-b425326dd77b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Grigori Inozemtsev <ginozemtsev@nvidia.com>"
+    }
+  }
+}
