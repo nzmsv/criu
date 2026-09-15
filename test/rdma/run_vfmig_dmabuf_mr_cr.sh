@@ -20,10 +20,21 @@
 # back is an MR uobject with the original lkey/rkey/length/iova and nothing
 # mapped behind it.
 #
-# So the pass condition is "the process restores and the MR shell is
-# there", NOT "the MR works": nothing has re-pointed it at a buffer. That
-# second half needs a bind verb and a recreated dma-buf, neither of which
-# exists yet.
+# On top of that, the restore now completes the second half. The buffer
+# the MR was registered over is gone -- a udmabuf is not something criu can
+# restore -- so dmabuf_test_plugin.so stands in for libcuda: on
+# POST_RESUME_DEVICES, in the criu master process, it creates a fresh
+# udmabuf per line of dmabuf_fds and rewrites the file with the fds it got.
+# criu's late bind pass then issues UVERBS_METHOD_MR_BIND_DMABUF for each
+# MR carrying a dmabuf_index, pointing the adopted mkey at real memory
+# again.
+#
+# So the pass condition is now "the process restores, the MR shell is
+# there, AND it has been rebound". The rebound buffer is fresh and zeroed,
+# deliberately: the holder's pattern check reads the restored memfd
+# *mapping*, an ordinary VMA that never went through the MR. What the bind
+# proves is that an MR restored as an unbacked shell can be re-pointed at a
+# buffer, not that it came back pointing at the old one.
 #
 # Original header follows.
 #
@@ -82,6 +93,7 @@ REPO="$(cd "$HERE/../.." && pwd)"
 PLUGIN_DIR="$REPO/plugins/rdma/mlx5_sriov_vfmig"
 
 MLX5_SO="${MLX5_SO:-$PLUGIN_DIR/rdma_mlx5_vfmig_plugin.so}"
+DMABUF_SO="${DMABUF_SO:-$HERE/dmabuf_test_plugin.so}"
 RESTORE_TOOL="${RESTORE_TOOL:-$PLUGIN_DIR/mlx5_vfmig_restore_vf}"
 HOLDER="$HERE/uverbs_ctx_holder"
 
@@ -115,7 +127,11 @@ cleanup() {
 		echo 0 >"/sys/bus/pci/devices/$PF/sriov_numvfs" 2>/dev/null || true
 		echo 1 >"/sys/bus/pci/devices/$PF/sriov_drivers_autoprobe" 2>/dev/null || true
 	fi
-	rm -rf "$WORKDIR"
+	if [[ "${VFMIG_KEEP:-0}" == "1" ]]; then
+		echo "  [keep] images and logs left in $WORKDIR"
+	else
+		rm -rf "$WORKDIR"
+	fi
 }
 trap cleanup EXIT
 
@@ -141,6 +157,7 @@ resolve_vf_ibdev() {
 sect "Preconditions"
 
 [[ -f "$MLX5_SO" ]]  || die "missing $MLX5_SO -- 'make -C $PLUGIN_DIR'"
+[[ -f "$DMABUF_SO" ]] || die "missing $DMABUF_SO -- 'make -C $HERE'"
 [[ -x "$RESTORE_TOOL" ]] || die "missing $RESTORE_TOOL -- 'make -C $PLUGIN_DIR'"
 
 [[ "$EUID" -eq 0 ]] || need_hw "not root (VF provisioning + cdev ioctls need root)"
@@ -166,6 +183,8 @@ note "PF=$PF vf_uuid=$VF_UUID"
 SANDBOX="$WORKDIR/plugins"
 mkdir -p "$SANDBOX"
 ln -sf "$MLX5_SO" "$SANDBOX/$(basename "$MLX5_SO")"
+# ... plus the libcuda stand-in, which recreates the dma-buf on restore.
+ln -sf "$DMABUF_SO" "$SANDBOX/$(basename "$DMABUF_SO")"
 
 # ---------------------------------------------------------------------------
 # Provision + bind the source VF, hold a context + PD + MR, dump (SAVE)
@@ -327,6 +346,19 @@ grep -qaE 'vfmig: RESTORE_MR_UHW_PACK ufile_handle=[0-9]+ lkey=0x[0-9a-f]+ mkey_
 grep -qaE 'RDMA: ufile_id=0x[0-9a-f]+ RESTORE_MR\(target_handle=[0-9]+, lkey=0x[0-9a-f]+, rkey=0x[0-9a-f]+, driver_id=[0-9]+\) ok' "$RLOG" \
 	|| { grep -aE 'RESTORE_MR' "$RLOG" >&2 || true; die "pie RESTORE_MR did not succeed"; }
 note "restore-side path fired: ucontext replay + RESTORE_PD + MR UHW pack + pie RESTORE_MR ok"
+
+# The dump must have exported the MR's buffer and recorded it, or there is
+# nothing for the bind pass to key on.
+[[ -s "$IMG/dmabuf_fds" ]] || die "dump wrote no dmabuf_fds (MR_EXPORT_DMABUF_FD did not fire?)"
+grep -qaE 'uobj DAG: MR handle=[0-9]+ on ibdev=[^ ]+ is dma-buf backed, exported fd=[0-9]+' "$IMG/dump.log" \
+	|| { grep -aE 'dma-buf backed' "$IMG/dump.log" >&2 || true; die "dump did not export the MR's dma-buf fd"; }
+# The stand-in must have recreated it before the bind pass ran...
+grep -qaE 'dmabuf test plugin: recreated [1-9][0-9]* udmabuf' "$RLOG" \
+	|| { grep -aE 'dmabuf test plugin' "$RLOG" >&2 || true; die "libcuda stand-in did not recreate the dma-buf"; }
+# ... and the late pass must have bound every line it found.
+grep -qaE 'rdma dmabuf bind: [1-9][0-9]* DMA-BUF MR\(s\) rebound' "$RLOG" \
+	|| { grep -aE 'rdma dmabuf bind' "$RLOG" >&2 || true; die "late bind pass did not rebind the MR"; }
+note "dma-buf rebind: exported at dump, recreated on restore, MR_BIND_DMABUF issued"
 
 sect "Functional check (SIGUSR1 -> MR content survived + ibv_dereg_mr)"
 # The restored holder blocks in pause(); SIGUSR1 makes it verify the MR
