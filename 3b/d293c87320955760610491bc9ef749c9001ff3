@@ -1,0 +1,45 @@
+images/uverbsfd.proto
+  s_fd0be53cef2a4b::t_66d33d39e31a0f 35-50
+criu/include/rdma.h
+  s_fd0be53cef2a4b::t_a3b32e46159d12 124-130
+  s_fd0be53cef2a4b::t_25c8d18957781a 123
+criu/include/rdma/internal.h
+  s_fd0be53cef2a4b::t_e13f17d51b84d5 68,83-84
+  s_fd0be53cef2a4b::t_cce7e5bebc703e 100-106
+  s_fd0be53cef2a4b::t_5cbf807f870f03 97
+  s_fd0be53cef2a4b::t_3182617a7a9055 98-99
+criu/rdma/uverbsfd.c
+  s_fd0be53cef2a4b::t_57cceb0e641386 505
+  s_fd0be53cef2a4b::t_365d7d9a107cca 41-51,790-797
+  s_fd0be53cef2a4b::t_046c018b43108a 810-1008
+  s_fd0be53cef2a4b::t_5cbf807f870f03 452,622-636
+  s_fd0be53cef2a4b::t_6ccabf513b04c5 798
+criu/cr-restore.c
+  s_fd0be53cef2a4b::t_a3b32e46159d12 2361-2368
+images/rdma_uobj.proto
+  s_fd0be53cef2a4b::t_9bcce5bc46f8b0 145-160
+criu/rdma/uobj_dump.c
+  s_fd0be53cef2a4b::t_be33ad41f985f3 697-698
+  s_fd0be53cef2a4b::t_7a4a9e6a18e471 262-266,268,270-271,274,277,281,284,287,290-291
+  s_fd0be53cef2a4b::t_f5a1ca399c64cc 747,749,778-781
+  s_fd0be53cef2a4b::t_e13f17d51b84d5 104-105,121,140-141,159-160
+  s_fd0be53cef2a4b::t_d01a43e275feaf 294
+criu/rdma/uobj_restore.c
+  s_fd0be53cef2a4b::t_cce7e5bebc703e 1488-1528
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "3bd293c87320955760610491bc9ef749c9001ff3",
+  "prompts": {},
+  "sessions": {
+    "s_fd0be53cef2a4b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1764101b-1723-448d-86c1-b425326dd77b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Grigori Inozemtsev <ginozemtsev@nvidia.com>"
+    }
+  }
+}
