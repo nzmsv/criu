@@ -1,0 +1,29 @@
+plugins/rdma/mlx5_sriov_vfmig/rdma_mlx5_vfmig_plugin.c
+  s_fd0be53cef2a4b::t_a3209642849b04 388
+  s_fd0be53cef2a4b::t_cce30e4086a4f7 403
+plugins/rdma/mlx5_sriov_vfmig/vfmig_restore.c
+  s_fd0be53cef2a4b::t_2cd2413ac434b1 1148-1164,1174-1178,1203-1205,1207-1208,1210-1213,1216-1217,1219
+  s_fd0be53cef2a4b::t_cce30e4086a4f7 1180,1182,1187-1199,1202,1218
+plugins/rdma/mlx5_sriov_vfmig/vfmig_dump.c
+  s_fd0be53cef2a4b::t_a3209642849b04 584-599,606-615,617
+plugins/rdma/mlx5_sriov_vfmig/vfmig_internal.h
+  s_fd0be53cef2a4b::t_148dc96a852601 339-344
+  s_fd0be53cef2a4b::t_cce30e4086a4f7 346
+  s_fd0be53cef2a4b::t_a3209642849b04 227-230,234
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "1fe818504dac9df2deeff3133c152452b08cc8af",
+  "prompts": {},
+  "sessions": {
+    "s_fd0be53cef2a4b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1764101b-1723-448d-86c1-b425326dd77b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Grigori Inozemtsev <ginozemtsev@nvidia.com>"
+    }
+  }
+}
