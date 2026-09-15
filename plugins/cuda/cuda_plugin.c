@@ -12,9 +12,11 @@
 
 #include <ctype.h>
 #include <fcntl.h>
+#include <grp.h>
 #include <limits.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <sys/stat.h>
 #include <sys/ptrace.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
@@ -91,7 +93,42 @@ static int add_pid_to_buf(struct list_head *pid_buf, int pid, cuda_task_state_t 
 	return 0;
 }
 
-static int launch_cuda_checkpoint(const char **args, char *buf, int buf_size)
+static int launch_cuda_checkpoint(const char **args, char *buf, int buf_size);
+static void dmabuf_fds_probe(const char *path, const char *ctx);
+
+/*
+ * Resolve @pid's real uid/gid, so cuda-checkpoint can be run as the user
+ * that owns the target rather than as criu's root.
+ *
+ * This matters because of how the handover actually works: cuda-checkpoint
+ * does not use the dma-buf fds itself. It messages the CUDA checkpoint
+ * thread inside the application -- which is not frozen -- and *that* thread
+ * fetches them with pidfd_getfd() out of cuda-checkpoint's table. The
+ * permission check is therefore the application attaching to
+ * cuda-checkpoint, and an unprivileged process cannot attach to a root one.
+ * criu runs as root, so a cuda-checkpoint inheriting that dies in
+ * pidfd_getfd() with no diagnostic at all: libcuda maps the failure to
+ * CUDA_ERROR_OPERATING_SYSTEM and prints nothing, and cuda-checkpoint
+ * reports only "OS call failed or operation not supported on this OS".
+ *
+ * Returns 0 and fills @uid/@gid, or -1 if /proc says nothing.
+ */
+static int target_creds(int pid, uid_t *uid, gid_t *gid)
+{
+	char path[64];
+	struct stat st;
+
+	snprintf(path, sizeof(path), "/proc/%d", pid);
+	if (stat(path, &st)) {
+		pr_perror("cuda: stat(%s) for target credentials", path);
+		return -1;
+	}
+	*uid = st.st_uid;
+	*gid = st.st_gid;
+	return 0;
+}
+
+static int launch_cuda_checkpoint_as(const char **args, char *buf, int buf_size, int as_pid)
 {
 #define READ  0
 #define WRITE 1
@@ -122,6 +159,29 @@ static int launch_cuda_checkpoint(const char **args, char *buf, int buf_size)
 			_exit(EXIT_FAILURE);
 		}
 		close(fd[READ]);
+
+		/*
+		 * Run as the user that owns the target, not as criu's root:
+		 * the application fetches the dma-buf fds out of our table
+		 * with pidfd_getfd(), which it may only do against a process
+		 * it could ptrace. See target_creds().
+		 */
+		if (as_pid > 0) {
+			uid_t uid;
+			gid_t gid;
+
+			if (target_creds(as_pid, &uid, &gid) == 0 && (uid != getuid() || gid != getgid())) {
+				if (setgroups(0, NULL) && errno != EPERM) {
+					fprintf(stderr, "setgroups failed: %s\n", strerror(errno));
+					_exit(EXIT_FAILURE);
+				}
+				if (setresgid(gid, gid, gid) || setresuid(uid, uid, uid)) {
+					fprintf(stderr, "dropping to uid %d/gid %d failed: %s\n", (int)uid,
+						(int)gid, strerror(errno));
+					_exit(EXIT_FAILURE);
+				}
+			}
+		}
 
 		/*
 		 * No close_fds() here. criu installs its own descriptors
@@ -290,11 +350,30 @@ static cuda_task_state_t get_cuda_state(pid_t pid)
 static const char *dmabuf_fds_path(char *buf, size_t len)
 {
 	int dir_fd = criu_get_image_dir();
+	char link[64], dir[PATH_MAX];
+	ssize_t n;
 
 	if (dir_fd < 0)
 		return NULL;
 
-	snprintf(buf, len, "/proc/%ld/fd/%d/dmabuf_fds", (long)getpid(), dir_fd);
+	/*
+	 * Resolve the image directory to a real path rather than naming it
+	 * through our own /proc/<pid>/fd. cuda-checkpoint runs as the user
+	 * that owns the target, not as criu, and one process cannot traverse
+	 * another's /proc/<pid>/fd -- it would get ENOENT/EACCES on a path
+	 * that is perfectly valid here. Fall back to the /proc form only if
+	 * the directory has no name (deleted, or an anonymous fd), where
+	 * nothing better exists anyway.
+	 */
+	snprintf(link, sizeof(link), "/proc/self/fd/%d", dir_fd);
+	n = readlink(link, dir, sizeof(dir) - 1);
+	if (n > 0) {
+		dir[n] = '\0';
+		snprintf(buf, len, "%s/dmabuf_fds", dir);
+	} else {
+		snprintf(buf, len, "/proc/%ld/fd/%d/dmabuf_fds", (long)getpid(), dir_fd);
+	}
+
 	if (access(buf, F_OK))
 		return NULL;
 
@@ -438,6 +517,15 @@ static int dmabuf_fds_import(int pid)
 		goto out_close;
 	}
 
+	/*
+	 * Now the file names fds in *our* table, so this is the point where
+	 * "is each of these a live dma-buf here?" is a meaningful question --
+	 * and where a wrong answer is still cheap to diagnose. criu's bind
+	 * pass resolves these same numbers much later, long after
+	 * cuda-checkpoint's unlock has closed the target's copies.
+	 */
+	dmabuf_fds_probe(path, "imported from the target");
+
 	pr_info("cuda: imported %d DMA-BUF fd(s) from pid %d\n", n, pid);
 	return 0;
 
@@ -445,6 +533,50 @@ out_close:
 	for (i = 0; i < n; i++)
 		close(fds[i]);
 	return ret;
+}
+
+/*
+ * Report, for each fd named in @path, whether it is actually open here and
+ * what it points at.
+ *
+ * cuda-checkpoint requires these to be open *in its own process*; it
+ * inherits them across the fork/exec below, which only works while they
+ * are non-CLOEXEC and nothing has closed or reused the numbers since the
+ * uobject walk exported them. When that breaks, libcuda reports the
+ * thoroughly opaque "OS call failed or operation not supported on this
+ * OS", so say plainly here what it is about to be handed.
+ */
+static void dmabuf_fds_probe(const char *path, const char *ctx)
+{
+	char line[32];
+	FILE *f;
+	int n = 0;
+
+	f = fopen(path, "r");
+	if (!f) {
+		pr_warn("cuda: dmabuf probe: cannot read %s: %s\n", path, strerror(errno));
+		return;
+	}
+	while (fgets(line, sizeof(line), f)) {
+		char link[64], target[PATH_MAX];
+		int fd = atoi(line);
+		ssize_t len;
+
+		if (line[0] == '\n' || line[0] == '\0')
+			continue;
+		n++;
+		if (fcntl(fd, F_GETFD) < 0) {
+			pr_err("cuda: dmabuf probe (%s): fd=%d is NOT open in criu: %s\n", ctx, fd, strerror(errno));
+			continue;
+		}
+		snprintf(link, sizeof(link), "/proc/self/fd/%d", fd);
+		len = readlink(link, target, sizeof(target) - 1);
+		target[len > 0 ? len : 0] = '\0';
+		pr_debug("cuda: dmabuf probe (%s): fd=%d open, cloexec=%d, -> %s\n", ctx, fd,
+			 !!(fcntl(fd, F_GETFD) & FD_CLOEXEC), len > 0 ? target : "?");
+	}
+	fclose(f);
+	pr_debug("cuda: dmabuf probe (%s): %d fd(s) listed in %s\n", ctx, n, path);
 }
 
 static int cuda_process_checkpoint_action(int pid, const char *action, unsigned int timeout, char *msg_buf,
@@ -479,12 +611,37 @@ static int cuda_process_checkpoint_action(int pid, const char *action, unsigned 
 	if (!strcmp(action, ACTION_CHECKPOINT) || !strcmp(action, ACTION_RESTORE)) {
 		dmabuf_arg = dmabuf_fds_path(dmabuf_path, sizeof(dmabuf_path));
 		if (dmabuf_arg) {
+			uid_t uid;
+			gid_t gid;
+
 			args[n++] = DMABUF_FDS_FLAG;
 			args[n++] = dmabuf_arg;
+			/*
+			 * criu created this root-owned 0600 in its image
+			 * directory, but cuda-checkpoint reads it as the
+			 * target's user -- and rewrites it in place on
+			 * restore. Hand it over.
+			 */
+			if (target_creds(pid, &uid, &gid) == 0 && chown(dmabuf_arg, uid, gid))
+				pr_perror("cuda: chown %s to %d:%d", dmabuf_arg, (int)uid, (int)gid);
+			/*
+			 * Checkpoint only. There the listed fds are an input
+			 * and must be open for us to pass on; on restore they
+			 * are the stale dump-side numbers, which libcuda
+			 * overwrites with the recreated ones -- so "not open
+			 * here" is the normal state, not a fault.
+			 */
+			if (!strcmp(action, ACTION_CHECKPOINT))
+				dmabuf_fds_probe(dmabuf_arg, "to hand to cuda-checkpoint");
 		}
 	}
 
-	return launch_cuda_checkpoint(args, msg_buf, buf_size);
+	return launch_cuda_checkpoint_as(args, msg_buf, buf_size, pid);
+}
+
+static int launch_cuda_checkpoint(const char **args, char *buf, int buf_size)
+{
+	return launch_cuda_checkpoint_as(args, buf, buf_size, -1);
 }
 
 static int interrupt_restore_thread(int restore_tid, k_rtsigset_t *restore_sigset)
