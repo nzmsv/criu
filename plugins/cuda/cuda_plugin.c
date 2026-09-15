@@ -12,6 +12,7 @@
 
 #include <ctype.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <sys/ptrace.h>
@@ -19,6 +20,9 @@
 
 /* cuda-checkpoint binary should live in your PATH */
 #define CUDA_CHECKPOINT "cuda-checkpoint"
+
+/* Option carrying the path to CRIU's dmabuf_fds image file. */
+#define DMABUF_FDS_FLAG "--dmabuf-fds-file"
 
 /* cuda-checkpoint --action flags */
 #define ACTION_LOCK	  "lock"
@@ -256,20 +260,71 @@ static cuda_task_state_t get_cuda_state(pid_t pid)
 	return get_task_state_enum(state_str);
 }
 
+/*
+ * Path to the image directory's dmabuf_fds file, or NULL if this
+ * checkpoint has none.
+ *
+ * CRIU writes that file when the process holds DMA-BUF-backed objects it
+ * cannot describe itself -- an RDMA MR over GPU memory, say, whose pages
+ * belong to us rather than to the address space being dumped. It is one
+ * decimal fd per line, in a fixed order. Handing cuda-checkpoint the path
+ * lets it record those buffers at checkpoint and write the recreated fds
+ * back into the same lines at restore, so whoever referenced them can find
+ * them again. Passing the path rather than the fds avoids marshalling a
+ * list, and rewriting in place is what preserves the ordering the
+ * consumers rely on.
+ *
+ * Returns a pointer to @buf, or NULL if there is nothing to pass.
+ */
+static const char *dmabuf_fds_path(char *buf, size_t len)
+{
+	int dir_fd = criu_get_image_dir();
+
+	if (dir_fd < 0)
+		return NULL;
+
+	snprintf(buf, len, "/proc/%ld/fd/%d/dmabuf_fds", (long)getpid(), dir_fd);
+	if (access(buf, F_OK))
+		return NULL;
+
+	return buf;
+}
+
 static int cuda_process_checkpoint_action(int pid, const char *action, unsigned int timeout, char *msg_buf,
 					  int buf_size)
 {
 	char pid_buf[16];
 	char timeout_buf[16];
+	char dmabuf_path[PATH_MAX];
+	const char *dmabuf_arg;
+	int n = 5;
 
 	snprintf(pid_buf, sizeof(pid_buf), "%d", pid);
 
 	const char *args[] = { CUDA_CHECKPOINT, "--action", action, "--pid", pid_buf, NULL /* --timeout */,
-			       NULL /* timeout_val */, NULL };
+			       NULL /* timeout_val */, NULL /* --dmabuf-fds-file */, NULL /* path */, NULL };
 	if (timeout > 0) {
 		snprintf(timeout_buf, sizeof(timeout_buf), "%d", timeout);
-		args[5] = "--timeout";
-		args[6] = timeout_buf;
+		args[n++] = "--timeout";
+		args[n++] = timeout_buf;
+	}
+
+	/*
+	 * Only checkpoint records the buffers and only restore reports the
+	 * recreated fds, so the option is meaningless -- and rejected -- for
+	 * lock and unlock.
+	 *
+	 * Not feature-detected. A cuda-checkpoint predating the option will
+	 * reject it and fail the action, which is the right outcome: the
+	 * alternative is completing a checkpoint whose DMA-BUF-backed objects
+	 * nothing can rebind afterwards, and discovering that only at restore.
+	 */
+	if (!strcmp(action, ACTION_CHECKPOINT) || !strcmp(action, ACTION_RESTORE)) {
+		dmabuf_arg = dmabuf_fds_path(dmabuf_path, sizeof(dmabuf_path));
+		if (dmabuf_arg) {
+			args[n++] = DMABUF_FDS_FLAG;
+			args[n++] = dmabuf_arg;
+		}
 	}
 
 	return launch_cuda_checkpoint(args, msg_buf, buf_size);
