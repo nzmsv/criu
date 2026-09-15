@@ -1,0 +1,19 @@
+test/rdma/uverbs_ctx_holder.c
+  s_fd0be53cef2a4b::t_d030ba549d2c1c 198,223,226
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "b24d275f6344e0615e820b1c9e0eee77f5b2bb96",
+  "prompts": {},
+  "sessions": {
+    "s_fd0be53cef2a4b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1764101b-1723-448d-86c1-b425326dd77b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Grigori Inozemtsev <ginozemtsev@nvidia.com>"
+    }
+  }
+}
