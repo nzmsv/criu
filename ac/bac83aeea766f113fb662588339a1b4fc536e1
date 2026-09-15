@@ -1,0 +1,29 @@
+criu/rdma/plugin_api.c
+  s_fd0be53cef2a4b::t_8aaa9abd7622a2 852-853,905-953
+  s_fd0be53cef2a4b::t_7d233f90be4a83 854-904
+criu/include/criu-plugin.h
+  s_fd0be53cef2a4b::t_5dea5edbd57720 407-442,532
+criu/plugin.c
+  s_fd0be53cef2a4b::t_5dea5edbd57720 62
+criu/include/rdma.h
+  s_fd0be53cef2a4b::t_7d233f90be4a83 140-146
+  s_fd0be53cef2a4b::t_5324f32f8aec86 139
+criu/cr-dump.c
+  s_fd0be53cef2a4b::t_22a2c8a9ff3a57 2257-2267
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "acbac83aeea766f113fb662588339a1b4fc536e1",
+  "prompts": {},
+  "sessions": {
+    "s_fd0be53cef2a4b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1764101b-1723-448d-86c1-b425326dd77b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Grigori Inozemtsev <ginozemtsev@nvidia.com>"
+    }
+  }
+}
