@@ -1485,6 +1485,47 @@ static int uobj_prepare_mr(int cmd_fd, uint32_t ufile_id, uint32_t kernel_driver
 	return 0;
 }
 
+/*
+ * Visit every DMA-BUF-backed MR captured under @ufile_id.
+ *
+ * The collected groups outlive the restore (they are never freed), so a
+ * late pass can walk the same entries the restore dispatcher used without
+ * re-reading the image. Only MRs carrying a dmabuf_index qualify: that
+ * field is written exactly for MRs whose backing is an exporter's, which
+ * are the ones RESTORE_MR adopted unbacked.
+ *
+ * Deliberately not routed through rdma_restore_uobj_dag_for_ufile(). That
+ * dispatcher reserves handles, topo-sorts PD before CQ before MR/QP, packs
+ * per-type UHW and decides master-versus-pie; binding an already-restored
+ * object is none of those, and giving it a second mode would make every
+ * one of those steps ask which mode it is running in.
+ */
+int rdma_uobj_foreach_dmabuf_mr(uint32_t ufile_id, rdma_dmabuf_mr_fn cb, void *arg)
+{
+	struct uobj_ufile_group *g = rdma_uobj_group_lookup(ufile_id);
+	struct uobj_collected *c;
+	int ret;
+
+	if (!g)
+		return 0;
+
+	list_for_each_entry(c, &g->entries, link) {
+		RdmaUobjEntry *e = c->e;
+
+		if (e->type != R3_UOBJ_TYPE__R3UT_MR || !e->mr)
+			continue;
+		if (!e->mr->has_dmabuf_index)
+			continue;
+
+		ret = cb(e->ufile_handle, e->mr->has_lkey ? e->mr->lkey : 0,
+			 e->mr->dmabuf_index, arg);
+		if (ret)
+			return ret;
+	}
+
+	return 0;
+}
+
 int rdma_restore_uobj_dag_for_ufile(int cmd_fd, uint32_t ufile_id, uint32_t kernel_driver_id)
 {
 	struct uobj_ufile_group *g = rdma_uobj_group_lookup(ufile_id);
