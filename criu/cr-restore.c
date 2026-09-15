@@ -2338,6 +2338,26 @@ skip_ns_bouncing:
 			pr_debug("restore late stage hook for external plugin failed\n");
 	}
 
+	/*
+	 * A second pass, after every RESUME_DEVICES_LATE hook has run.
+	 *
+	 * run_plugins() stops at the first hook that does not return -ENOTSUP,
+	 * so a plugin whose work must follow another plugin's late resume
+	 * cannot simply register on the same hook -- it would be unreachable
+	 * whenever the earlier one succeeds. The case this exists for is a GPU
+	 * plugin recreating device allocations above, and something holding a
+	 * reference to one of them (an RDMA MR over a dma-buf) needing to be
+	 * pointed back at it afterwards.
+	 */
+	pr_info("Run post-resume hook from criu master for external devices\n");
+	for_each_pstree_item(item) {
+		if (!task_alive(item))
+			continue;
+		ret = run_plugins(POST_RESUME_DEVICES, item->pid->real);
+		if (ret < 0 && ret != -ENOTSUP)
+			pr_debug("post-resume hook for external plugin failed\n");
+	}
+
 	ret = run_scripts(ACT_PRE_RESUME);
 	if (ret)
 		pr_err("Pre-resume script ret code %d\n", ret);

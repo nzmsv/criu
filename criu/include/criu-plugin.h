@@ -383,6 +383,27 @@ enum {
 	 */
 	CR_PLUGIN_HOOK__RDMA_RESTORE_UOBJ_QP_NEEDS_PIE = 27,
 
+	/*
+	 * Runs once per restored task, immediately after every
+	 * RESUME_DEVICES_LATE hook has had its turn.
+	 *
+	 * For work that must follow another plugin's late resume rather than
+	 * merely be late itself. The motivating case: a GPU plugin recreates
+	 * the process's device allocations at RESUME_DEVICES_LATE, and only
+	 * then can anything holding a reference to one of those allocations
+	 * -- an RDMA MR over a dma-buf, say -- be pointed back at it.
+	 *
+	 * RESUME_DEVICES_LATE cannot serve that purpose even with careful
+	 * plugin ordering, because run_plugins() stops at the first hook that
+	 * does not return -ENOTSUP: a second plugin on the same hook is
+	 * unreachable whenever the first one succeeds.
+	 *
+	 * Return: 0 on success, -ENOTSUP if the plugin has nothing to do,
+	 * < 0 errno on failure. A failure is logged and does not abort the
+	 * restore, matching RESUME_DEVICES_LATE.
+	 */
+	CR_PLUGIN_HOOK__POST_RESUME_DEVICES = 28,
+
 	CR_PLUGIN_HOOK__MAX
 };
 
@@ -471,6 +492,7 @@ DECLARE_PLUGIN_HOOK_ARGS(CR_PLUGIN_HOOK__RDMA_RESTORE_UOBJ_MR_UHW_PACK, const Rd
 			 struct rdma_uhw_spec *uhw);
 DECLARE_PLUGIN_HOOK_ARGS(CR_PLUGIN_HOOK__RDMA_RESTORE_UOBJ_CQ_NEEDS_PIE, void);
 DECLARE_PLUGIN_HOOK_ARGS(CR_PLUGIN_HOOK__RDMA_RESTORE_UOBJ_QP_NEEDS_PIE, void);
+DECLARE_PLUGIN_HOOK_ARGS(CR_PLUGIN_HOOK__POST_RESUME_DEVICES, int pid);
 
 /*
  * RDMA sharing policy.
