@@ -1,0 +1,22 @@
+criu/cr-restore.c
+  s_fd0be53cef2a4b::t_004cc1d62da464 2369-2377
+criu/rdma/uverbsfd.c
+  s_fd0be53cef2a4b::t_8eebf320a58b54 1065
+  s_fd0be53cef2a4b::t_95061aae8a1775 1026-1064,1066-1080
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "3101ad0d900d9cfa5e51512cf5406ef0e463b424",
+  "prompts": {},
+  "sessions": {
+    "s_fd0be53cef2a4b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1764101b-1723-448d-86c1-b425326dd77b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Grigori Inozemtsev <ginozemtsev@nvidia.com>"
+    }
+  }
+}
