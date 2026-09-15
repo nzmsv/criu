@@ -1,0 +1,19 @@
+test/rdma/run_vfmig_dmabuf_mr_cr.sh
+  s_fd0be53cef2a4b::t_f391e7940e8f2d 322-323,325-330
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "0d880ac5ea0619406c847dcdd21b1d10742ac4d9",
+  "prompts": {},
+  "sessions": {
+    "s_fd0be53cef2a4b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1764101b-1723-448d-86c1-b425326dd77b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Grigori Inozemtsev <ginozemtsev@nvidia.com>"
+    }
+  }
+}
