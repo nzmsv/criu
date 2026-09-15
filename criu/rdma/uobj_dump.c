@@ -329,6 +329,62 @@ static int dmabuf_fds_append(int fd, uint32_t *index_out)
  * is driver-agnostic; a driver that does not implement it answers
  * -EOPNOTSUPP, same as a kernel too old to know the method at all.
  */
+/*
+ * Every MR this dump has unbound, with the fd its buffer was exported to.
+ *
+ * The unbind is the one step of the dump that changes the dumpee: its MR
+ * stops describing anything. Every other device-side change we make is
+ * undone if the dump aborts -- vfmig un-parks the VF from fini(DUMP), the
+ * cuda plugin unwinds its checkpoint -- so this follows the same
+ * convention rather than leaving a resumed process holding dead lkeys.
+ *
+ * The window is bounded by the exported fds, and deliberately so. While we
+ * hold them the exporter's buffers are alive and a rebind restores exactly
+ * the pre-dump state. Once they are released the GPU memory is gone, there
+ * is nothing to rebind to, and unbound is the correct state -- so the list
+ * is cleared at the same moment, which is also what keeps a later rebind
+ * from reaching a recycled fd number.
+ */
+struct rdma_unbound_mr {
+	struct rdma_unbound_mr *next;
+	int uctx_fd;
+	uint32_t driver_id;
+	uint32_t handle;
+	int dmabuf_fd;
+	char ibdev[64];
+};
+
+static struct rdma_unbound_mr *rdma_unbound_mrs;
+
+static void rdma_note_unbound_mr(int uctx_fd, uint32_t driver_id, uint32_t handle, int dmabuf_fd, const char *ibdev)
+{
+	struct rdma_unbound_mr *u = xzalloc(sizeof(*u));
+
+	if (!u) {
+		pr_err("uobj DAG: out of memory recording unbound MR handle=%u for rollback\n", handle);
+		return;
+	}
+	/*
+	 * Our own dup of the holder cdev, not @uctx_fd itself: the walk's
+	 * dups are closed the moment it finishes (see rdma_capture_uobj_dag),
+	 * well before the abort path could want to rebind, and by then the
+	 * number may name something else entirely -- another ufile, whose
+	 * MR handles mean something different.
+	 */
+	u->uctx_fd = fcntl(uctx_fd, F_DUPFD_CLOEXEC, 0);
+	if (u->uctx_fd < 0) {
+		pr_perror("uobj DAG: dup holder cdev for rollback of MR handle=%u", handle);
+		xfree(u);
+		return;
+	}
+	u->driver_id = driver_id;
+	u->handle = handle;
+	u->dmabuf_fd = dmabuf_fd;
+	snprintf(u->ibdev, sizeof(u->ibdev), "%s", ibdev);
+	u->next = rdma_unbound_mrs;
+	rdma_unbound_mrs = u;
+}
+
 static int rdma_send_unbind_dmabuf_mr(int cmd_fd, uint32_t driver_id, uint32_t handle)
 {
 	struct {
@@ -810,14 +866,16 @@ static int uobj_mr_cb(const struct rdma_nl_res_entry *e, void *arg)
 	 */
 	rc = rdma_export_mr_dmabuf_fd(uf->holder_uctx_fd, uf->kernel_driver_id, e->ufile_handle);
 	if (rc >= 0) {
+		int dmabuf_fd = rc; /* rc is reused for the unbind below */
+
 		pr_debug("uobj DAG: MR handle=%u on ibdev=%s is dma-buf backed, exported fd=%d\n",
-			 e->ufile_handle, w->ib->ibdev, rc);
-		if (dmabuf_fds_append(rc, &dmabuf_index))
+			 e->ufile_handle, w->ib->ibdev, dmabuf_fd);
+		if (dmabuf_fds_append(dmabuf_fd, &dmabuf_index))
 			return (w->err = -1);
 		has_dmabuf_index = true;
 		/* Left open, and inheritable -- see DMABUF_FDS_IMG above. */
-		if (fcntl(rc, F_SETFD, 0))
-			pr_perror("uobj DAG: clear CLOEXEC on exported dma-buf fd %d", rc);
+		if (fcntl(dmabuf_fd, F_SETFD, 0))
+			pr_perror("uobj DAG: clear CLOEXEC on exported dma-buf fd %d", dmabuf_fd);
 
 		rc = rdma_send_unbind_dmabuf_mr(uf->holder_uctx_fd, uf->kernel_driver_id,
 						e->ufile_handle);
@@ -826,6 +884,8 @@ static int uobj_mr_cb(const struct rdma_nl_res_entry *e, void *arg)
 			       e->ufile_handle, w->ib->ibdev, rc, strerror(-rc));
 			return (w->err = -1);
 		}
+		rdma_note_unbound_mr(uf->holder_uctx_fd, uf->kernel_driver_id, e->ufile_handle, dmabuf_fd,
+				     w->ib->ibdev);
 		pr_debug("uobj DAG: MR handle=%u unbound from its dma-buf\n", e->ufile_handle);
 	} else if (rc != -EOPNOTSUPP) {
 		pr_err("uobj DAG: MR_EXPORT_DMABUF_FD handle=%u on ibdev=%s failed: %d (%s)\n",
@@ -1403,4 +1463,55 @@ int rdma_suspend_captured_ibdevs(void)
 	if (suspended)
 		pr_info("uobj DAG: quiesced %d ibdev datapath(s) before the memory dump\n", suspended);
 	return 0;
+}
+
+/*
+ * Put back the MRs this dump unbound, then drop the exported fds.
+ *
+ * @rollback selects which: on an aborted dump we rebind each MR to the
+ * buffer it was unbound from, so a process criu is about to resume finds
+ * its MRs as it left them. On a completed dump there is nothing to undo
+ * and we only release.
+ *
+ * Either way the fds go, and the list with them. Holding an exported fd
+ * keeps the exporter's buffer alive, which is the memory a GPU checkpoint
+ * exists to release; and once released, the recorded numbers name nothing
+ * -- or worse, something else -- so nothing may rebind against them
+ * afterwards.
+ *
+ * A rebind failure is reported and the walk continues: the dump has
+ * already failed, and abandoning the remaining MRs would make that worse.
+ */
+void rdma_release_exported_dmabufs(bool rollback)
+{
+	struct rdma_unbound_mr *u, *n;
+	int rebound = 0, failed = 0, closed = 0;
+
+	for (u = rdma_unbound_mrs; u; u = n) {
+		n = u->next;
+
+		if (rollback) {
+			int ret = rdma_send_bind_dmabuf_mr(u->uctx_fd, u->driver_id, u->handle, u->dmabuf_fd);
+
+			if (ret) {
+				pr_err("uobj DAG: rollback: MR handle=%u on ibdev=%s could not be rebound: "
+				       "%d (%s); it stays unbacked\n",
+				       u->handle, u->ibdev, ret, strerror(-ret));
+				failed++;
+			} else {
+				rebound++;
+			}
+		}
+
+		if (close(u->dmabuf_fd) == 0)
+			closed++;
+		close(u->uctx_fd);
+		xfree(u);
+	}
+	rdma_unbound_mrs = NULL;
+
+	if (rollback && (rebound || failed))
+		pr_warn("uobj DAG: dump aborted: rebound %d MR(s), %d left unbacked\n", rebound, failed);
+	if (closed)
+		pr_info("uobj DAG: released %d exported DMA-BUF fd(s)\n", closed);
 }
