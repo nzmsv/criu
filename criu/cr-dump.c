@@ -2286,6 +2286,11 @@ int cr_dump_tasks(pid_t pid)
 	if (checkpoint_devices())
 		goto err;
 
+	if (fault_injected(FI_DUMP_AFTER_RDMA_UNBIND)) {
+		pr_err("fault injection: failing the dump with the DMA-BUF MRs unbound\n");
+		goto err;
+	}
+
 	/*
 	 * The GPU plugins have had their look at the exported dma-buf fds,
 	 * so drop them: each is a reference on the exporter's buffer, which
