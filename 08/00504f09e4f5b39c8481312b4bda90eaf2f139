@@ -1,0 +1,24 @@
+criu/rdma/uobj_dump.c
+  s_fd0be53cef2a4b::t_fa0e43165237c5 255-263,756-758
+plugins/cuda/cuda_plugin.c
+  s_fd0be53cef2a4b::t_12bc567f25853e 724-738
+  s_fd0be53cef2a4b::t_976dbbb95cb314 19,294-320,360-439,723
+  s_fd0be53cef2a4b::t_a2813a92c4709c 321-359,602-607
+  s_fd0be53cef2a4b::t_1a2d58a7c9c84d 608
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "0800504f09e4f5b39c8481312b4bda90eaf2f139",
+  "prompts": {},
+  "sessions": {
+    "s_fd0be53cef2a4b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1764101b-1723-448d-86c1-b425326dd77b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Grigori Inozemtsev <ginozemtsev@nvidia.com>"
+    }
+  }
+}
