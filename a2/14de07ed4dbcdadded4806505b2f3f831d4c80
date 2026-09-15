@@ -1,0 +1,33 @@
+criu/cr-restore.c
+  s_fd0be53cef2a4b::t_64f39452df3ca4 2361-2368
+criu/include/rdma.h
+  s_fd0be53cef2a4b::t_c40c5023316e1b 123-130
+criu/include/rdma/internal.h
+  s_fd0be53cef2a4b::t_835b997fe00049 68,83-84,97-106
+criu/rdma/uobj_dump.c
+  s_fd0be53cef2a4b::t_9fc3854d93b6f4 104-105,121,140-141,159-160,261-268,270,286-291,294,697-698,747,749,778-781
+criu/rdma/uobj_restore.c
+  s_fd0be53cef2a4b::t_9a94c05ef87b99 1488-1528
+criu/rdma/uverbsfd.c
+  s_fd0be53cef2a4b::t_b0c4fbc8b5604d 41-51,452,505,622-636,790-798,810-1008
+images/rdma_uobj.proto
+  s_fd0be53cef2a4b::t_5065010f40f3b4 145-160
+images/uverbsfd.proto
+  s_fd0be53cef2a4b::t_0380970dcd02a8 35-50
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "a214de07ed4dbcdadded4806505b2f3f831d4c80",
+  "prompts": {},
+  "sessions": {
+    "s_fd0be53cef2a4b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1764101b-1723-448d-86c1-b425326dd77b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Grigori Inozemtsev <ginozemtsev@nvidia.com>"
+    }
+  }
+}
