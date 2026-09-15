@@ -16,6 +16,7 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <sys/ptrace.h>
+#include <sys/syscall.h>
 #include <sys/wait.h>
 
 /* cuda-checkpoint binary should live in your PATH */
@@ -122,8 +123,18 @@ static int launch_cuda_checkpoint(const char **args, char *buf, int buf_size)
 		}
 		close(fd[READ]);
 
-		close_fds(STDERR_FILENO + 1);
-
+		/*
+		 * No close_fds() here. criu installs its own descriptors
+		 * O_CLOEXEC (service fds go in via dup3(..., O_CLOEXEC)), so
+		 * execvp() already drops everything we do not mean to pass.
+		 * The one exception is deliberate: the dma-buf fds criu
+		 * exported for the DMA-BUF-backed MRs have had FD_CLOEXEC
+		 * cleared precisely so cuda-checkpoint inherits them, since
+		 * the numbers in the --dmabuf-fds-file are criu's own and
+		 * only mean anything in a process that shares its table.
+		 * Closing everything above stderr here would shut exactly
+		 * those and nothing else.
+		 */
 		execvp(args[0], (char **)args);
 
 		/* We can't use pr_error() as log file fd is closed. */
@@ -290,6 +301,152 @@ static const char *dmabuf_fds_path(char *buf, size_t len)
 	return buf;
 }
 
+/* Never more lines than criu could have exported MRs for. */
+#define DMABUF_MAX_FDS 64
+
+/*
+ * Close the exported DMA-BUF fds criu handed us, now that cuda-checkpoint
+ * has recorded the buffers.
+ *
+ * criu opens one of these per DMA-BUF-backed MR during the uobject dump
+ * (MR_EXPORT_DMABUF_FD) and deliberately leaves it open, because the
+ * number has to still name that buffer when cuda-checkpoint reads
+ * dmabuf_fds. Once the checkpoint action returns, that is done with: every
+ * fd is a reference on the exporter's buffer, and holding them for the
+ * rest of the dump pins memory the checkpoint exists to let go of.
+ *
+ * The numbers stay in the file. They are the dump-side record, and the
+ * restore side rewrites them wholesale rather than resolving them.
+ */
+static void dmabuf_fds_release(void)
+{
+	char path[PATH_MAX];
+	char line[32];
+	int n = 0;
+	FILE *f;
+
+	if (!dmabuf_fds_path(path, sizeof(path)))
+		return;
+
+	f = fopen(path, "r");
+	if (!f)
+		return;
+	while (fgets(line, sizeof(line), f)) {
+		if (line[0] == '\n' || line[0] == '\0')
+			continue;
+		if (close(atoi(line)) == 0)
+			n++;
+	}
+	fclose(f);
+
+	if (n)
+		pr_info("cuda: released %d exported DMA-BUF fd(s)\n", n);
+}
+
+/*
+ * Pull the recreated DMA-BUF fds out of the restored process and into our
+ * own fd table, rewriting dmabuf_fds with the numbers they landed on here.
+ *
+ * cuda-checkpoint --action restore recreates the buffers inside the target
+ * and reports them as fds in *its* table, which is the only namespace it
+ * can speak. criu's bind pass runs much later, in this process, and issues
+ * the bind ioctl against fds of its own -- and by then the fds in the
+ * target are gone, because --action unlock closes them. So the numbers
+ * have to be resolved here, in the window between those two actions, while
+ * they still name something.
+ *
+ * pidfd_getfd() is the transfer: it duplicates a descriptor out of another
+ * process, which is exactly the "get the fds back into the criu process"
+ * step the file convention assumes has happened by the time anyone reads
+ * it. Once rewritten, every reader of dmabuf_fds -- here or in criu proper
+ * -- is talking about this process's fd table.
+ *
+ * The fds are left open on purpose: the bind pass resolves them out of
+ * this table at the end of restore.
+ *
+ * Returns 0 if there was nothing to do, so a checkpoint with no DMA-BUF
+ * objects costs a failed open and nothing else.
+ */
+static int dmabuf_fds_import(int pid)
+{
+	char path[PATH_MAX];
+	int fds[DMABUF_MAX_FDS];
+	int n = 0, i, pidfd, ret = -1;
+	char line[32];
+	FILE *f;
+
+	if (!dmabuf_fds_path(path, sizeof(path)))
+		return 0;
+
+	f = fopen(path, "r");
+	if (!f)
+		return 0;
+	while (fgets(line, sizeof(line), f)) {
+		if (line[0] == '\n' || line[0] == '\0')
+			continue;
+		if (n >= DMABUF_MAX_FDS) {
+			pr_err("cuda: more than %d lines in dmabuf_fds\n", DMABUF_MAX_FDS);
+			fclose(f);
+			return -1;
+		}
+		fds[n++] = atoi(line);
+	}
+	fclose(f);
+
+	if (!n)
+		return 0;
+
+	pidfd = syscall(__NR_pidfd_open, pid, 0);
+	if (pidfd < 0) {
+		pr_perror("cuda: pidfd_open(%d) to import dma-buf fds", pid);
+		return -1;
+	}
+
+	for (i = 0; i < n; i++) {
+		int local = syscall(__NR_pidfd_getfd, pidfd, fds[i], 0);
+
+		if (local < 0) {
+			pr_perror("cuda: pidfd_getfd(pid=%d fd=%d)", pid, fds[i]);
+			while (--i >= 0)
+				close(fds[i]);
+			close(pidfd);
+			return -1;
+		}
+		/* Nothing downstream execs, and the unlock below would only
+		 * carry them into cuda-checkpoint for no reason. */
+		fcntl(local, F_SETFD, FD_CLOEXEC);
+		fds[i] = local;
+	}
+	close(pidfd);
+
+	/* Rewrite in place: the bind pass keys each MR to its line number,
+	 * so the order has to survive even though the numbers do not. */
+	f = fopen(path, "w");
+	if (!f) {
+		pr_perror("cuda: reopen dmabuf_fds for write");
+		goto out_close;
+	}
+	for (i = 0; i < n; i++) {
+		if (fprintf(f, "%d\n", fds[i]) < 0) {
+			pr_perror("cuda: write dmabuf_fds");
+			fclose(f);
+			goto out_close;
+		}
+	}
+	if (fclose(f)) {
+		pr_perror("cuda: close dmabuf_fds");
+		goto out_close;
+	}
+
+	pr_info("cuda: imported %d DMA-BUF fd(s) from pid %d\n", n, pid);
+	return 0;
+
+out_close:
+	for (i = 0; i < n; i++)
+		close(fds[i]);
+	return ret;
+}
+
 static int cuda_process_checkpoint_action(int pid, const char *action, unsigned int timeout, char *msg_buf,
 					  int buf_size)
 {
@@ -452,6 +609,15 @@ int cuda_plugin_checkpoint_devices(int pid)
 		pr_err("CHECKPOINT_DEVICES failed with %s\n", msg_buf);
 	}
 
+	/*
+	 * Whether or not that succeeded: these fds are ours, opened by
+	 * MR_EXPORT_DMABUF_FD during the uobject walk, and each is a
+	 * reference on the exporter's buffer -- exactly the memory the
+	 * checkpoint exists to release. cuda-checkpoint has had its look at
+	 * them by now either way.
+	 */
+	dmabuf_fds_release();
+
 	int_ret = interrupt_restore_thread(restore_tid, &save_sigset);
 	return status != 0 ? -1 : int_ret;
 }
@@ -563,6 +729,22 @@ int resume_device(int pid, int checkpointed, cuda_task_state_t initial_task_stat
 		status = cuda_process_checkpoint_action(pid, ACTION_RESTORE, 0, msg_buf, sizeof(msg_buf));
 		if (status) {
 			pr_err("RESUME_DEVICES RESTORE failed with %s\n", msg_buf);
+			ret = -1;
+			goto interrupt;
+		}
+
+		/*
+		 * Only meaningful after that restore, which is what rewrote
+		 * dmabuf_fds with fds in this target. Without it the file
+		 * still holds the dump side's numbers, which name nothing
+		 * here -- and pidfd_getfd would happily import whatever the
+		 * target happens to have at those numbers instead.
+		 *
+		 * Before the unlock, because the unlock closes the recreated
+		 * fds and leaves nothing for criu's bind pass to resolve.
+		 */
+		if (dmabuf_fds_import(pid)) {
+			pr_err("RESUME_DEVICES could not import dma-buf fds\n");
 			ret = -1;
 			goto interrupt;
 		}
