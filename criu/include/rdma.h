@@ -137,6 +137,21 @@ int rdma_prepare_rdma_mrs(struct task_restore_args *ta);
 int rdma_bind_dmabuf_mrs_late(void);
 
 /*
+ * Quiesce the hardware datapath of every device the dump captured a
+ * uverbs context on, once per device, before the memory snapshot. No-op
+ * for trees with no RDMA. See CR_PLUGIN_HOOK__RDMA_SUSPEND_IBDEV.
+ */
+int rdma_suspend_captured_ibdevs(void);
+int rdma_dispatch_suspend_ibdev(uint32_t criu_driver, const char *ibdev);
+
+/*
+ * Bring those ibdevs back online after rdma_bind_dmabuf_mrs_late() has
+ * bound the restored MRs. See CR_PLUGIN_HOOK__RDMA_RESUME_IBDEV.
+ */
+int rdma_resume_collected_ibdevs(void);
+int rdma_dispatch_resume_ibdev(const UverbsFileEntry *uvfe);
+
+/*
  * RDMA plugin queries (criu/rdma/plugin_api.c):
  *
  *   rdma_arbitrate_plugin_claim()
