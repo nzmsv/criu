@@ -144,6 +144,14 @@ int rdma_bind_dmabuf_mrs_late(void);
 int rdma_suspend_captured_ibdevs(void);
 
 /*
+ * Drop the dma-buf fds the uobject walk exported, and with @rollback also
+ * rebind the MRs it unbound -- for an aborted dump, whose process is about
+ * to be resumed. Must run while those fds are still open: after them the
+ * exporter's buffers are gone and unbound is the correct state.
+ */
+void rdma_release_exported_dmabufs(bool rollback);
+
+/*
  * Bring those ibdevs back online after rdma_bind_dmabuf_mrs_late() has
  * bound the restored MRs. See CR_PLUGIN_HOOK__RDMA_RESUME_IBDEV; the
  * per-device dispatchers live below, after the pb-c include they need.

@@ -2111,6 +2111,24 @@ static int cr_dump_finish(int ret)
 
 	cr_plugin_fini(CR_PLUGIN_STAGE__DUMP, ret);
 
+	/*
+	 * An aborted dump resumes the dumpee, so put back the DMA-BUF MRs
+	 * the uobject walk unbound -- the same convention the device plugins
+	 * follow on this path.
+	 *
+	 * After cr_plugin_fini(), not before: rebinding issues verbs on the
+	 * device, and an RDMA plugin that parked its datapath for the
+	 * snapshot only un-parks it from its fini(DUMP). Run earlier and the
+	 * MR_BIND_DMABUF lands on a suspended function, where the driver's
+	 * QUERY_MKEY gets no completion and times out -- leaking a command
+	 * resource on the way.
+	 *
+	 * A no-op once the successful path has already released the exported
+	 * fds, and after that point there is nothing to rebind to anyway.
+	 */
+	if (ret)
+		rdma_release_exported_dmabufs(true);
+
 	pstree_switch_state(root_item, (ret || post_dump_ret) ? TASK_ALIVE : opts.final_state);
 	timing_stop(TIME_FROZEN);
 	free_pstree(root_item);
@@ -2267,6 +2285,15 @@ int cr_dump_tasks(pid_t pid)
 
 	if (checkpoint_devices())
 		goto err;
+
+	/*
+	 * The GPU plugins have had their look at the exported dma-buf fds,
+	 * so drop them: each is a reference on the exporter's buffer, which
+	 * is the memory a checkpoint exists to release. This also closes the
+	 * window in which an aborted dump could put the unbound MRs back --
+	 * past here their backing is gone and unbound is the right state.
+	 */
+	rdma_release_exported_dmabufs(false);
 
 	if (collect_pstree_ids())
 		goto err;
