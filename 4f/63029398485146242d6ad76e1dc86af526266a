@@ -1,0 +1,19 @@
+criu/rdma/uverbsfd.c
+  s_fd0be53cef2a4b::t_c71c8e31a95e67 612-614,617-619,633-641
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "4f63029398485146242d6ad76e1dc86af526266a",
+  "prompts": {},
+  "sessions": {
+    "s_fd0be53cef2a4b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1764101b-1723-448d-86c1-b425326dd77b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Grigori Inozemtsev <ginozemtsev@nvidia.com>"
+    }
+  }
+}
