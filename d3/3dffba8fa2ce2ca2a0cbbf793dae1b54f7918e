@@ -1,0 +1,21 @@
+test/rdma/Makefile
+  s_fd0be53cef2a4b::t_9df637e1976a84 5,22-27,29
+test/rdma/abort_test_plugin.c
+  s_fd0be53cef2a4b::t_9df637e1976a84 1-43
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "d33dffba8fa2ce2ca2a0cbbf793dae1b54f7918e",
+  "prompts": {},
+  "sessions": {
+    "s_fd0be53cef2a4b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1764101b-1723-448d-86c1-b425326dd77b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Grigori Inozemtsev <ginozemtsev@nvidia.com>"
+    }
+  }
+}
