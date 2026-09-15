@@ -7,18 +7,17 @@
 # anonymous buffer, so the MR is an ib_umem_dmabuf -- the same shape a GPU
 # MR has, without needing a GPU.
 #
-# The holder also unbinds the MR before the checkpoint
-# (HOLDER_UNBIND_DMABUF_MR=1, UVERBS_METHOD_MR_UNBIND_DMABUF): the
-# translations are zapped and the umem revoked, so the device state saved
-# by fini(DUMP) carries the mkey as a bare identity rather than as a
-# description of the exporter's memory, whose DMA addresses could not be
-# reproduced on the destination anyway.
+# The holder does NOT unbind: criu does, during the uobject dump, right
+# after it exports the buffer. That is the point -- a process being
+# checkpointed has no reason to know it is being checkpointed, so the
+# holder here behaves like an ordinary application and the gate exercises
+# the path a real workload would take.
 #
-# On the restore side mlx5_ib_restore_mr takes its unbacked branch --
-# addr == 0 means there is no user VA to pin and no placeholder was
-# replayed for it -- and adopts the mkey identity alone. What should come
-# back is an MR uobject with the original lkey/rkey/length/iova and nothing
-# mapped behind it.
+# On the restore side mlx5_ib_restore_mr takes its DMA-BUF lane --
+# selected by IB_UVERBS_RESTORE_MR_DMABUF, not inferred from a missing
+# user VA -- and adopts the mkey identity alone. What should come back is
+# an MR uobject with the original lkey/rkey/length/iova and nothing mapped
+# behind it.
 #
 # On top of that, the restore now completes the second half. The buffer
 # the MR was registered over is gone -- a udmabuf is not something criu can
@@ -226,7 +225,7 @@ HLOG="$WORKDIR/holder.log"
 # holder allocate a PD and register a persistent MR over a known-pattern
 # buffer so the dump captures an R3UT_PD and an R3UT_MR uobject.
 systemd-run --scope --quiet --unit="vfmig-mr-cr-holder-$$" \
-	bash -c "exec </dev/null >'$HLOG' 2>&1; export HOLDER_ALLOC_DMABUF_MR=1 HOLDER_UNBIND_DMABUF_MR=1; exec '$HOLDER' '$SRC_IBDEV' '$STATUS'" &
+	bash -c "exec </dev/null >'$HLOG' 2>&1; export HOLDER_ALLOC_DMABUF_MR=1; exec '$HOLDER' '$SRC_IBDEV' '$STATUS'" &
 disown "$!" 2>/dev/null || true
 for _ in $(seq 1 50); do
 	HOLDER_PID="$(pgrep -fx "$HOLDER $SRC_IBDEV $STATUS" | head -1 || true)"
