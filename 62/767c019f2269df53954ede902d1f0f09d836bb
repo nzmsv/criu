@@ -1,0 +1,19 @@
+criu/rdma/uobj_dump.c
+  s_fd0be53cef2a4b::t_997d00a24c095b 72,257-279,281-282,285-293,296,302,307-318,769
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "62767c019f2269df53954ede902d1f0f09d836bb",
+  "prompts": {},
+  "sessions": {
+    "s_fd0be53cef2a4b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1764101b-1723-448d-86c1-b425326dd77b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Grigori Inozemtsev <ginozemtsev@nvidia.com>"
+    }
+  }
+}
