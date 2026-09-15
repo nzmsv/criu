@@ -1,0 +1,20 @@
+criu/cr-dump.c
+  s_fd0be53cef2a4b::t_632cd81328b5b3 2114-2130
+  s_fd0be53cef2a4b::t_3414316ce46153 2131
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "b17dce853127486fa484327ade044949176d5da2",
+  "prompts": {},
+  "sessions": {
+    "s_fd0be53cef2a4b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1764101b-1723-448d-86c1-b425326dd77b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Grigori Inozemtsev <ginozemtsev@nvidia.com>"
+    }
+  }
+}
