@@ -1342,6 +1342,7 @@ struct rdma_pending_mr {
 	uint32_t access_flags;
 	uint32_t lkey;
 	uint32_t rkey;
+	bool is_dmabuf;
 	int cmd_fd_dup;
 	uint32_t uhw_in_len; /* 0 -> UHW-less RESTORE_MR (rxe) */
 	uint8_t uhw_in_buf[RST_RDMA_MR_UHW_IN_MAX];
@@ -1471,6 +1472,14 @@ static int uobj_prepare_mr(int cmd_fd, uint32_t ufile_id, uint32_t kernel_driver
 	p->access_flags = attrs->access_flags;
 	p->lkey = attrs->lkey;
 	p->rkey = attrs->rkey;
+	/*
+	 * dmabuf_index is stamped at dump for exactly those MRs whose
+	 * buffer MR_EXPORT_DMABUF_FD could hand out, so it is the record of
+	 * which registration verb created this MR. RESTORE_MR is told that
+	 * rather than left to deduce it from a missing user VA, which a
+	 * device-memory MR and an implicit ODP MR also lack.
+	 */
+	p->is_dmabuf = attrs->has_dmabuf_index;
 	p->cmd_fd_dup = dup_fd;
 	p->uhw_in_len = uhw_in_len;
 	if (uhw_in_len)
@@ -1764,6 +1773,7 @@ int rdma_prepare_rdma_mrs(struct task_restore_args *ta)
 		r->access_flags = p->access_flags;
 		r->lkey_hint = p->lkey;
 		r->rkey_hint = p->rkey;
+		r->is_dmabuf = p->is_dmabuf;
 		r->uhw_in_len = p->uhw_in_len;
 		if (p->uhw_in_len)
 			memcpy(r->uhw_in_buf, p->uhw_in_buf, p->uhw_in_len);
