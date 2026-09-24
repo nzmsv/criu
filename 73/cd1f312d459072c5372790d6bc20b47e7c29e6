@@ -1,0 +1,22 @@
+plugins/cuda/cuda_plugin.c
+  s_e12a9475f8180e::t_d7848c509500f8 20-22
+  s_e12a9475f8180e::t_ece39c96c491a7 602-603
+  s_e12a9475f8180e::t_5cf4b50d591386 389-437
+  s_e12a9475f8180e::t_f4de7d040ad786 388
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "73cd1f312d459072c5372790d6bc20b47e7c29e6",
+  "prompts": {},
+  "sessions": {
+    "s_e12a9475f8180e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8cf6bcd6-af1f-456e-b7c4-823de7feb789",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Grigori Inozemtsev <ginozemtsev@nvidia.com>"
+    }
+  }
+}
