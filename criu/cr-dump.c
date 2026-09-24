@@ -2109,25 +2109,26 @@ static int cr_dump_finish(int ret)
 	if (arch_set_thread_regs(root_item, true) < 0)
 		return -1;
 
-	cr_plugin_fini(CR_PLUGIN_STAGE__DUMP, ret);
-
 	/*
-	 * An aborted dump resumes the dumpee, so put back the DMA-BUF MRs
-	 * the uobject walk unbound -- the same convention the device plugins
-	 * follow on this path.
+	 * An aborted dump resumes the dumpee, so put its ibdevs back as it
+	 * left them: resume the parked datapaths, rebind the DMA-BUF MRs the
+	 * uobject walk unbound, and only then lift the fences -- the same
+	 * convention the device plugins follow on this path.
 	 *
-	 * After cr_plugin_fini(), not before: rebinding issues verbs on the
-	 * device, and an RDMA plugin that parked its datapath for the
-	 * snapshot only un-parks it from its fini(DUMP). Run earlier and the
-	 * MR_BIND_DMABUF lands on a suspended function, where the driver's
-	 * QUERY_MKEY gets no completion and times out -- leaking a command
-	 * resource on the way.
+	 * Before cr_plugin_fini(), which unloads the plugins that resume and
+	 * lift. The resume must come first: MR_BIND_DMABUF on a suspended
+	 * function gets no completion for the driver's QUERY_MKEY and times
+	 * out, leaking a command resource on the way. The lift must come
+	 * last: peers never stopped writing, and a fence lifted over an
+	 * unbound MR turns those writes into protection errors.
 	 *
-	 * A no-op once the successful path has already released the exported
-	 * fds, and after that point there is nothing to rebind to anyway.
+	 * The rebind is a no-op once the successful path has already
+	 * released the exported fds; after that point there is nothing to
+	 * rebind to, and the fences on those ibdevs stay up.
 	 */
-	if (ret)
-		rdma_release_exported_dmabufs(true);
+	rdma_finish_dump(ret != 0);
+
+	cr_plugin_fini(CR_PLUGIN_STAGE__DUMP, ret);
 
 	pstree_switch_state(root_item, (ret || post_dump_ret) ? TASK_ALIVE : opts.final_state);
 	timing_stop(TIME_FROZEN);

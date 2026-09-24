@@ -152,6 +152,14 @@ int rdma_suspend_captured_ibdevs(void);
 void rdma_release_exported_dmabufs(bool rollback);
 
 /*
+ * End of dump, before cr_plugin_fini() unloads the plugins. On an aborted
+ * dump, undo what the dump did to its ibdevs in the one order that is
+ * safe: resume the parked ones, rebind the unbound MRs, then lift the
+ * fences -- except on an ibdev left with an unbacked MR.
+ */
+void rdma_finish_dump(bool aborted);
+
+/*
  * Bring those ibdevs back online after rdma_bind_dmabuf_mrs_late() has
  * bound the restored MRs. See CR_PLUGIN_HOOK__RDMA_RESUME_IBDEV; the
  * per-device dispatchers live below, after the pb-c include they need.
@@ -207,8 +215,8 @@ int rdma_dispatch_open_uverbs_cdev(const UverbsFileEntry *uvfe);
  * host's device: on a migration the destination ibdev is called
  * something else, and only the owning plugin can map between them.
  */
-int rdma_dispatch_suspend_ibdev(uint32_t criu_driver, const char *ibdev);
-int rdma_dispatch_fence_ibdev(uint32_t criu_driver, const char *ibdev);
+int rdma_dispatch_suspend_ibdev(uint32_t criu_driver, const char *ibdev, bool resume);
+int rdma_dispatch_fence_ibdev(uint32_t criu_driver, const char *ibdev, bool lift);
 int rdma_dispatch_resume_ibdev(const UverbsFileEntry *uvfe);
 
 /*
