@@ -1,0 +1,36 @@
+plugins/rdma/mlx5_sriov_vfmig/rdma_mlx5_vfmig_plugin.c
+  s_e12a9475f8180e::t_34e0aca3b64a32 187-191
+criu/rdma/plugin_api.c
+  s_e12a9475f8180e::t_93bfc6e0fb36c0 860,901,908,949
+criu/include/criu-plugin.h
+  s_e12a9475f8180e::t_67962008fbc7c3 417,420-424,426-427,477-485,488-489,581,583
+criu/include/rdma.h
+  s_e12a9475f8180e::t_93bfc6e0fb36c0 155-161,218-219
+  s_e12a9475f8180e::t_2eb9342dea4172 154
+criu/cr-dump.c
+  s_e12a9475f8180e::t_62ff99749a8c71 2113-2116,2118-2123,2125-2127,2129-2131
+criu/rdma/uobj_dump.c
+  s_e12a9475f8180e::t_85c7a19b3b3e25 1271
+  s_e12a9475f8180e::t_0a9c14e11b916b 332,1561,1566-1567,1576,1581,1584,1586,1600-1643
+  s_e12a9475f8180e::t_14d4b82f9b01ec 333-378,1375-1380,1385-1386,1500,1518-1523,1531,1582-1583,1585,1644
+plugins/rdma/mlx5_sriov_vfmig/vfmig_internal.h
+  s_e12a9475f8180e::t_34e0aca3b64a32 248,253-254,256
+plugins/rdma/mlx5_sriov_vfmig/vfmig_dump.c
+  s_e12a9475f8180e::t_34e0aca3b64a32 564-576,673,676,687-700,727-729,731,746-757
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "06d980001b74d221806efe059787210b62439b92",
+  "prompts": {},
+  "sessions": {
+    "s_e12a9475f8180e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8cf6bcd6-af1f-456e-b7c4-823de7feb789",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Grigori Inozemtsev <ginozemtsev@nvidia.com>"
+    }
+  }
+}
