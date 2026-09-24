@@ -2110,24 +2110,10 @@ static int cr_dump_finish(int ret)
 		return -1;
 
 	/*
-	 * An aborted dump resumes the dumpee, so put its ibdevs back as it
-	 * left them: resume the parked datapaths, rebind the DMA-BUF MRs the
-	 * uobject walk unbound, and only then lift the fences -- the same
-	 * convention the device plugins follow on this path.
-	 *
-	 * Before cr_plugin_fini(), which unloads the plugins that resume and
-	 * lift. The resume must come first: MR_BIND_DMABUF on a suspended
-	 * function gets no completion for the driver's QUERY_MKEY and times
-	 * out, leaking a command resource on the way. The lift must come
-	 * last: peers never stopped writing, and a fence lifted over an
-	 * unbound MR turns those writes into protection errors.
-	 *
-	 * The rebind is a no-op once the successful path has already
-	 * released the exported fds; after that point there is nothing to
-	 * rebind to, and the fences on those ibdevs stay up.
+	 * Also finishes the RDMA side of the dump, between the device
+	 * plugins' exit hooks and the RDMA plugins' -- see rdma_finish_dump()
+	 * for what an aborted dump puts back, and in which order.
 	 */
-	rdma_finish_dump(ret != 0);
-
 	cr_plugin_fini(CR_PLUGIN_STAGE__DUMP, ret);
 
 	pstree_switch_state(root_item, (ret || post_dump_ret) ? TASK_ALIVE : opts.final_state);
@@ -2295,11 +2281,15 @@ int cr_dump_tasks(pid_t pid)
 	/*
 	 * The GPU plugins have had their look at the exported dma-buf fds,
 	 * so drop them: each is a reference on the exporter's buffer, which
-	 * is the memory a checkpoint exists to release. This also closes the
-	 * window in which an aborted dump could put the unbound MRs back --
-	 * past here their backing is gone and unbound is the right state.
+	 * is the memory a checkpoint exists to release. An abort from here on
+	 * rebinds the MRs to the buffers the plugins' rollback recreates.
 	 */
-	rdma_release_exported_dmabufs(false);
+	rdma_release_exported_dmabufs();
+
+	if (fault_injected(FI_DUMP_AFTER_DMABUF_RELEASE)) {
+		pr_err("fault injection: failing the dump with the exported dma-bufs released\n");
+		goto err;
+	}
 
 	if (collect_pstree_ids())
 		goto err;

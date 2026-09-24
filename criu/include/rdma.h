@@ -144,18 +144,19 @@ int rdma_bind_dmabuf_mrs_late(void);
 int rdma_suspend_captured_ibdevs(void);
 
 /*
- * Drop the dma-buf fds the uobject walk exported, and with @rollback also
- * rebind the MRs it unbound -- for an aborted dump, whose process is about
- * to be resumed. Must run while those fds are still open: after them the
- * exporter's buffers are gone and unbound is the correct state.
+ * Drop the dma-buf fds the uobject walk exported, once the device plugins
+ * have checkpointed the buffers behind them. The records of the unbound
+ * MRs stay, for an abort to rebind them.
  */
-void rdma_release_exported_dmabufs(bool rollback);
+void rdma_release_exported_dmabufs(void);
 
 /*
- * End of dump, before cr_plugin_fini() unloads the plugins. On an aborted
- * dump, undo what the dump did to its ibdevs in the one order that is
- * safe: resume the parked ones, rebind the unbound MRs, then lift the
- * fences -- except on an ibdev left with an unbacked MR.
+ * End of dump, called by cr_plugin_fini() between the device plugins' exit
+ * hooks and the RDMA plugins'. On an aborted dump, undo what the dump did
+ * to its ibdevs in the one order that is safe: resume the parked ones,
+ * rebind the unbound MRs -- to the buffers the device plugins' rollback
+ * recreated, where it did -- then lift the fences, except on an ibdev left
+ * with an unbacked MR.
  */
 void rdma_finish_dump(bool aborted);
 

@@ -29,6 +29,12 @@ enum faults {
 	 * enters that path, so this is the only way to exercise it.
 	 */
 	FI_DUMP_AFTER_RDMA_UNBIND = 139,
+	/*
+	 * Fail the dump after criu has released those fds, once the device
+	 * plugins checkpointed the buffers: the rollback must then rebind to
+	 * the buffers the plugins recreate, not the exported ones.
+	 */
+	FI_DUMP_AFTER_DMABUF_RELEASE = 140,
 	FI_MAX,
 };
 

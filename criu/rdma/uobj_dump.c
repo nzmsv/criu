@@ -377,20 +377,23 @@ static struct rdma_held_ibdev *rdma_hold_ibdev(uint32_t criu_driver, const char 
 }
 
 /*
- * Every MR this dump has unbound, with the fd its buffer was exported to.
+ * Every MR this dump has unbound, with the fd its buffer was exported to
+ * and the line of dmabuf_fds that fd was recorded on.
  *
  * The unbind is the one step of the dump that changes the dumpee: its MR
  * stops describing anything. Every other device-side change we make is
- * undone if the dump aborts -- vfmig un-parks the VF from fini(DUMP), the
- * cuda plugin unwinds its checkpoint -- so this follows the same
- * convention rather than leaving a resumed process holding dead lkeys.
+ * undone if the dump aborts -- vfmig un-parks the VF, the cuda plugin
+ * unwinds its checkpoint -- so this follows the same convention rather
+ * than leaving a resumed process holding dead lkeys.
  *
- * The window is bounded by the exported fds, and deliberately so. While we
- * hold them the exporter's buffers are alive and a rebind restores exactly
- * the pre-dump state. Once they are released the GPU memory is gone, there
- * is nothing to rebind to, and unbound is the correct state -- so the list
- * is cleared at the same moment, which is also what keeps a later rebind
- * from reaching a recycled fd number.
+ * What an aborted dump rebinds to depends on how far it got. Before a
+ * device plugin checkpointed the buffer, the exported fd still names the
+ * memory the process uses. After, the plugin's rollback recreates the
+ * buffer and rewrites the MR's line of dmabuf_fds with the fd it came back
+ * as, and that is the one to bind -- the exported fd names memory the
+ * process no longer has. So the record outlives the release of the
+ * exported fd (@dmabuf_fd becomes -1 then), and is dropped only when the
+ * dump finishes.
  */
 struct rdma_unbound_mr {
 	struct rdma_unbound_mr *next;
@@ -398,12 +401,14 @@ struct rdma_unbound_mr {
 	uint32_t driver_id;
 	uint32_t handle;
 	int dmabuf_fd;
+	uint32_t index;
 	char ibdev[64];
 };
 
 static struct rdma_unbound_mr *rdma_unbound_mrs;
 
-static void rdma_note_unbound_mr(int uctx_fd, uint32_t driver_id, uint32_t handle, int dmabuf_fd, const char *ibdev)
+static void rdma_note_unbound_mr(int uctx_fd, uint32_t driver_id, uint32_t handle, int dmabuf_fd, uint32_t index,
+				 const char *ibdev)
 {
 	struct rdma_unbound_mr *u = xzalloc(sizeof(*u));
 
@@ -427,6 +432,7 @@ static void rdma_note_unbound_mr(int uctx_fd, uint32_t driver_id, uint32_t handl
 	u->driver_id = driver_id;
 	u->handle = handle;
 	u->dmabuf_fd = dmabuf_fd;
+	u->index = index;
 	snprintf(u->ibdev, sizeof(u->ibdev), "%s", ibdev);
 	u->next = rdma_unbound_mrs;
 	rdma_unbound_mrs = u;
@@ -932,7 +938,7 @@ static int uobj_mr_cb(const struct rdma_nl_res_entry *e, void *arg)
 			return (w->err = -1);
 		}
 		rdma_note_unbound_mr(uf->holder_uctx_fd, uf->kernel_driver_id, e->ufile_handle, dmabuf_fd,
-				     w->ib->ibdev);
+				     dmabuf_index, w->ib->ibdev);
 		pr_debug("uobj DAG: MR handle=%u unbound from its dma-buf\n", e->ufile_handle);
 	} else if (rc != -EOPNOTSUPP) {
 		pr_err("uobj DAG: MR_EXPORT_DMABUF_FD handle=%u on ibdev=%s failed: %d (%s)\n",
@@ -1538,72 +1544,147 @@ int rdma_suspend_captured_ibdevs(void)
 }
 
 /*
- * Put back the MRs this dump unbound, then drop the exported fds.
+ * Drop the exported fds once the device plugins have checkpointed the
+ * buffers behind them.
  *
- * @rollback selects which: on an aborted dump we rebind each MR to the
- * buffer it was unbound from, so a process criu is about to resume finds
- * its MRs as it left them. On a completed dump there is nothing to undo
- * and we only release.
- *
- * Either way the fds go, and the list with them. Holding an exported fd
- * keeps the exporter's buffer alive, which is the memory a GPU checkpoint
- * exists to release; and once released, the recorded numbers name nothing
- * -- or worse, something else -- so nothing may rebind against them
- * afterwards.
- *
- * A rebind failure is reported and the walk continues: the dump has
- * already failed, and abandoning the remaining MRs would make that worse.
+ * Holding an exported fd keeps the exporter's buffer alive, which is the
+ * memory a GPU checkpoint exists to release. The records stay: an abort
+ * after this point still rebinds, to whatever a device plugin's rollback
+ * recreates (see struct rdma_unbound_mr).
  */
-void rdma_release_exported_dmabufs(bool rollback)
+void rdma_release_exported_dmabufs(void)
 {
-	struct rdma_unbound_mr *u, *n;
-	int rebound = 0, failed = 0, closed = 0;
-	bool unbacked;
+	struct rdma_unbound_mr *u;
+	int closed = 0;
 
-	for (u = rdma_unbound_mrs; u; u = n) {
-		n = u->next;
-
-		/* Released without a rebind, an MR is left with nothing behind it. */
-		unbacked = !rollback;
-		if (rollback) {
-			int ret = rdma_send_bind_dmabuf_mr(u->uctx_fd, u->driver_id, u->handle, u->dmabuf_fd);
-
-			if (ret) {
-				pr_err("uobj DAG: rollback: MR handle=%u on ibdev=%s could not be rebound: "
-				       "%d (%s); it stays unbacked\n",
-				       u->handle, u->ibdev, ret, strerror(-ret));
-				failed++;
-				unbacked = true;
-			} else {
-				rebound++;
-			}
-		}
-		if (unbacked) {
-			struct rdma_held_ibdev *h = rdma_find_held_ibdev(u->ibdev);
-
-			if (h)
-				h->unbacked = true;
-		}
-
+	for (u = rdma_unbound_mrs; u; u = u->next) {
+		if (u->dmabuf_fd < 0)
+			continue;
 		if (close(u->dmabuf_fd) == 0)
 			closed++;
-		close(u->uctx_fd);
-		xfree(u);
+		u->dmabuf_fd = -1;
 	}
-	rdma_unbound_mrs = NULL;
 
-	if (rollback && (rebound || failed))
-		pr_warn("uobj DAG: dump aborted: rebound %d MR(s), %d left unbacked\n", rebound, failed);
 	if (closed)
 		pr_info("uobj DAG: released %d exported DMA-BUF fd(s)\n", closed);
 }
 
 /*
- * Resume, rebind, lift: each step needs the one before it. A rebind
+ * The fd on line @index of dmabuf_fds, or -1. A device plugin that
+ * recreated the buffers during its rollback has rewritten the lines with
+ * the fds they came back as, in this process's table.
+ */
+static int dmabuf_fds_line(uint32_t index)
+{
+	char line[32];
+	uint32_t i = 0;
+	int img_fd, fd = -1;
+	FILE *f;
+
+	img_fd = openat(get_service_fd(IMG_FD_OFF), DMABUF_FDS_IMG, O_RDONLY | O_CLOEXEC);
+	if (img_fd < 0)
+		return -1;
+	f = fdopen(img_fd, "r");
+	if (!f) {
+		close(img_fd);
+		return -1;
+	}
+	while (fgets(line, sizeof(line), f)) {
+		if (i++ == index) {
+			fd = atoi(line);
+			break;
+		}
+	}
+	fclose(f);
+	return fd;
+}
+
+/*
+ * Rebind every MR this dump unbound, for an aborted dump whose process is
+ * about to run again.
+ *
+ * To the buffer a device plugin recreated, if its line of dmabuf_fds now
+ * names a different fd than the one exported -- the plugin had
+ * checkpointed the buffer and has restored it. Otherwise to the exported
+ * fd, if it is still open: nothing was checkpointed and it still names the
+ * process's memory. With neither, the MR stays unbacked and its ibdev keeps
+ * its fence.
+ *
+ * A rebind failure is reported and the walk continues: the dump has
+ * already failed, and abandoning the remaining MRs would make that worse.
+ */
+static void rdma_rebind_unbound_mrs(void)
+{
+	int rebound = 0, recreated = 0, failed = 0;
+	struct rdma_unbound_mr *u;
+
+	for (u = rdma_unbound_mrs; u; u = u->next) {
+		int line_fd = dmabuf_fds_line(u->index);
+		int fd = u->dmabuf_fd;
+		int ret;
+
+		if (line_fd >= 0 && line_fd != u->dmabuf_fd) {
+			fd = line_fd;
+			recreated++;
+		}
+		if (fd < 0) {
+			pr_err("uobj DAG: rollback: MR handle=%u on ibdev=%s has no buffer to rebind to; "
+			       "it stays unbacked\n",
+			       u->handle, u->ibdev);
+			ret = -ENOENT;
+		} else {
+			ret = rdma_send_bind_dmabuf_mr(u->uctx_fd, u->driver_id, u->handle, fd);
+			if (ret)
+				pr_err("uobj DAG: rollback: MR handle=%u on ibdev=%s could not be rebound to fd %d: "
+				       "%d (%s); it stays unbacked\n",
+				       u->handle, u->ibdev, fd, ret, strerror(-ret));
+		}
+		if (ret) {
+			struct rdma_held_ibdev *h = rdma_find_held_ibdev(u->ibdev);
+
+			if (h)
+				h->unbacked = true;
+			failed++;
+		} else {
+			rebound++;
+		}
+	}
+
+	if (rebound || failed)
+		pr_warn("uobj DAG: dump aborted: rebound %d MR(s), %d left unbacked (%d to a recreated buffer)\n",
+			rebound, failed, recreated);
+}
+
+/*
+ * Drop the unbound-MR records and whatever fds they still hold. The fds a
+ * device plugin imported into dmabuf_fds are not ours to close: the plugin
+ * put them there, and a bound MR holds its own reference anyway.
+ */
+static void rdma_forget_unbound_mrs(void)
+{
+	struct rdma_unbound_mr *u, *n;
+
+	for (u = rdma_unbound_mrs; u; u = n) {
+		n = u->next;
+		if (u->dmabuf_fd >= 0)
+			close(u->dmabuf_fd);
+		close(u->uctx_fd);
+		xfree(u);
+	}
+	rdma_unbound_mrs = NULL;
+}
+
+/*
+ * Finish the dump's RDMA side, from cr_plugin_fini(): after the device
+ * plugins' exit hooks, before the RDMA plugins'.
+ *
+ * On an aborted dump, put the ibdevs back as the process left them:
+ * resume, rebind, lift -- each step needs the one before it. A rebind
  * issues device commands a parked device cannot complete, and a fence
  * lifted before the rebind lets peers' writes land on MRs that are still
- * unbound. All of it needs the plugins, so this runs before
- * cr_plugin_fini() unloads them.
+ * unbound. The rebind must also follow the device plugins' rollback, which
+ * is what recreates a checkpointed buffer; and the resume and lift need
+ * the RDMA plugins, which is why they are torn down last.
  */
 void rdma_finish_dump(bool aborted)
 {
@@ -1619,7 +1700,7 @@ void rdma_finish_dump(bool aborted)
 				pr_err("uobj DAG: dump aborted: resume of ibdev=%s failed: %d\n", h->ibdev, r);
 		}
 
-		rdma_release_exported_dmabufs(true);
+		rdma_rebind_unbound_mrs();
 
 		for (h = rdma_held_ibdevs; h; h = h->next) {
 			if (!h->fenced)
@@ -1635,6 +1716,8 @@ void rdma_finish_dump(bool aborted)
 				       r);
 		}
 	}
+
+	rdma_forget_unbound_mrs();
 
 	for (h = rdma_held_ibdevs; h; h = n) {
 		n = h->next;

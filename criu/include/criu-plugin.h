@@ -418,9 +418,10 @@ enum {
 	 * that un-parks exactly what it parked.
 	 *
 	 * On an aborted dump core calls the hook again with @resume set,
-	 * before fini(DUMP) and before it rebinds the DMA-BUF MRs the walk
-	 * unbound: the rebind issues device commands, which a parked device
-	 * cannot complete.
+	 * before it rebinds the DMA-BUF MRs the walk unbound: the rebind
+	 * issues device commands, which a parked device cannot complete. That
+	 * happens inside cr_plugin_fini(DUMP), after the exit hooks of the
+	 * plugins that are not RDMA-class and before this plugin's own.
 	 *
 	 * Return: 0 on success, -ENOTSUP if the plugin does not own @ibdev,
 	 * < 0 errno on failure. A failure to suspend aborts the dump; a
@@ -482,7 +483,8 @@ enum {
 	 * On an aborted dump core calls the hook again with @lift set, once
 	 * it has rebound the ibdev's DMA-BUF MRs: lifted any earlier, the
 	 * peers' writes land on MRs that are still unbound. An ibdev with an
-	 * MR that could not be rebound is left fenced.
+	 * MR that could not be rebound is left fenced. Like the resume, this
+	 * runs inside cr_plugin_fini(DUMP), before this plugin's exit hook.
 	 *
 	 * Return: 0 on success, -ENOTSUP if the plugin does not own @ibdev or
 	 * has nothing to fence, < 0 errno on failure. A failure to fence
