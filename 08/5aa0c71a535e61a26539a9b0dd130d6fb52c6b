@@ -1,0 +1,21 @@
+criu/include/criu-plugin.h
+  s_e12a9475f8180e::t_1214f9edfc6951 462,468-473
+criu/rdma/uobj_dump.c
+  s_e12a9475f8180e::t_1214f9edfc6951 1261-1262,1272,1292-1293,1295,1299-1300,1304-1309,1311,1313,1317-1318,1322-1325,1327-1333,1335,1342-1343
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "085aa0c71a535e61a26539a9b0dd130d6fb52c6b",
+  "prompts": {},
+  "sessions": {
+    "s_e12a9475f8180e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8cf6bcd6-af1f-456e-b7c4-823de7feb789",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Grigori Inozemtsev <ginozemtsev@nvidia.com>"
+    }
+  }
+}
