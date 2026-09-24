@@ -1,0 +1,20 @@
+plugins/rdma/mlx5_sriov_vfmig/vfmig_dump.c
+  s_e12a9475f8180e::t_4d9f8a276545aa 596-602,604-607,611,677-686,697-699,712-722
+  s_e12a9475f8180e::t_d9e6cf209f3216 723
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "a105be67bb6a43f07b64c22a058d67dc5f5533a0",
+  "prompts": {},
+  "sessions": {
+    "s_e12a9475f8180e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8cf6bcd6-af1f-456e-b7c4-823de7feb789",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Grigori Inozemtsev <ginozemtsev@nvidia.com>"
+    }
+  }
+}
